@@ -1,0 +1,43 @@
+user_input = "I need some expert guidance on if cats are better than dogs. Could you request assistance for me?"
+config = {"configurable": {"thread_id": "1"}}
+# The config is the **second positional argument** to stream() or invoke()!
+events = graph.stream(
+    {"messages": [("user", user_input)]}, config, stream_mode="values"
+)
+for event in events:
+    if "messages" in event:
+        event["messages"][-1].pretty_print()
+
+--
+
+snapshot = graph.get_state(config)
+snapshot.next
+
+--
+
+from langchain_core.messages import AIMessage, ToolMessage
+
+
+def create_response(response: str, ai_message: AIMessage):
+    return ToolMessage(
+        content=response,
+        tool_call_id=ai_message.tool_calls[0]["id"],
+    )
+
+ai_message = snapshot.values["messages"][-1]
+human_response = (
+    "We, the experts are here to help! Cats are better than dogs."
+)
+tool_message = create_response(human_response, ai_message)
+graph.update_state(config, {"messages": [tool_message]})
+
+--
+
+graph.get_state(config).values["messages"]
+
+--
+
+events = graph.stream(None, config, stream_mode="values")
+for event in events:
+    if "messages" in event:
+        event["messages"][-1].pretty_print()
