@@ -25,10 +25,10 @@ def update_dialog_stack(existing_list: list[str], new_element: Optional[str]) ->
 
 
 class State(TypedDict):
-    messages: Annotated[list[i AnyMessage ], add_messages]
+    messages: Annotated[list[ AnyMessage ], add_messages]
     user_info: str
     #New
-    dialog_state: Annotated[list[ Literal["chatbot", "update_flight", "book_car_rental", "book_hotel", "book_excursion"] ], update_dialog_stack]
+    dialog_state: Annotated[list[ Literal["primary_assistant", "flight_assistant", "car_assistent", "hotel_assistant", "excursion_assistant"] ], update_dialog_stack]
 
 
 # Chatbot w/ template containing a good system prompt.
@@ -40,7 +40,10 @@ from langchain_core.runnables import Runnable, RunnableConfig
 #New
 from langchain_core.pydantic_v1 import BaseModel, Field
 
-class Chatbot:
+# All chatbot nodes including the assistants are based on this Chatbot class.
+# They do the same thing, only differ in what the runnable does.
+# The runnable is the combo of a specific prompt + dedicated llm with specialized toolset for the job.
+class Assistant:
 
     def __init__(self, runnable: Runnable):
         self.runnable = runnable
@@ -103,10 +106,10 @@ flight_assistant_prompt = ChatPromtTemlate.from_messages(
     ]
 ).partial(time=datetime.now())
 
-flight_safe_tools = [search_flights]
-flight_sensitive_tools = [update_ticket_to_new_flight, cancel_ticket]
-flight_booking_tools = flight_safe_tools + flight_safe_tools
-flight_runnable = flight_assistant_prompt | llm.bind_tools(flight_booking_tools + [CompleteOrEscalate])
+flight_assistant_safe_tools = [search_flights]
+flight_assistant_sensitive_tools = [update_ticket_to_new_flight, cancel_ticket]
+flight_assistant_tools = flight_assistant_safe_tools + flight_assistant_sensitive_tools
+flight_assistant_runnable = flight_assistant_prompt | llm.bind_tools(flight_assistant_tools + [CompleteOrEscalate])
 
 hotel_assistant_prompt = ChatPromptTemplate.from_messages(
     [
@@ -132,11 +135,11 @@ hotel_assistant_prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(time=datetime.now())
 
-hotel_safe_tools = [search_hotels]
-hotel_sensitive_tools = [book_hotel, update_hotel, cancel_hotel]
-hotel_tools = hotel_safe_tools + hotel_sensitive_tools
-hotel_runnable = hotel_assistant_prompt | llm.bind_tools(
-    hotel_tools + [CompleteOrEscalate]
+hotel_assistant_safe_tools = [search_hotels]
+hotel_assistant_sensitive_tools = [book_hotel, update_hotel, cancel_hotel]
+hotel_assistant_tools = hotel_assistant_safe_tools + hotel_assistant_sensitive_tools
+hotel_assistant_runnable = hotel_assistant_prompt | llm.bind_tools(
+    hotel_assistant_tools + [CompleteOrEscalate]
 )
 
 car_assistant_prompt = ChatPromptTemplate.from_messages(
@@ -163,15 +166,15 @@ car_assistant_prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(time=datetime.now())
 
-car_safe_tools = [search_car_rentals]
-car_sensitive_tools = [
+car_assistant_safe_tools = [search_car_rentals]
+car_assistant_sensitive_tools = [
     book_car_rental,
     update_car_rental,
     cancel_car_rental,
 ]
-car_tools = car_safe_tools + car_sensitive_tools
-car_runnable = car_assistant_prompt | llm.bind_tools(
-    car_tools + [CompleteOrEscalate]
+car_assistant_tools = car_assistant_safe_tools + car_assistant_sensitive_tools
+car_assistant_runnable = car_assistant_prompt | llm.bind_tools(
+    car_assistant_tools + [CompleteOrEscalate]
 )
 
 excursion_assistant_prompt = ChatPromptTemplate.from_messages(
@@ -196,11 +199,11 @@ excursion_assistant_prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(time=datetime.now())
 
-excursion_safe_tools = [search_trip_recommendations]
-excursion_sensitive_tools = [book_excursion, update_excursion, cancel_excursion]
-excursion_tools = excursion_safe_tools + excursion_sensitive_tools
-excursion_runnable = excursion_assistant_prompt | llm.bind_tools(
-    excursion_tools + [CompleteOrEscalate]
+excursion_assistant_safe_tools = [search_trip_recommendations]
+excursion_assistant_sensitive_tools = [book_excursion, update_excursion, cancel_excursion]
+excursion_assistant_tools = excursion_assistant_safe_tools + excursion_assistant_sensitive_tools
+excursion_assistant_runnable = excursion_assistant_prompt | llm.bind_tools(
+    excursion_assistant_tools + [CompleteOrEscalate]
 )
 
 # New tools for supervisor to delegate work to the delegates
@@ -273,7 +276,7 @@ class ToExcursionAssistant(BaseModel):
             }
         }
 
-primary_chatbot_prompt = ChatPromptTemplate.from_messages(
+primary_assistant_prompt = ChatPromptTemplate.from_messages(
     [
         (
         "system",
@@ -293,7 +296,7 @@ primary_chatbot_prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(time=datetime.now())
 
-primary_chatbot_tools = [
+primary_assistant_tools = [
     TavilySearchResults(max_results=1),
     search_flights,
     lookup_policy,  
@@ -307,7 +310,7 @@ llm = ChatOpenAI(model_name="gpt-3.5-turbo-0125")
 
 #sensitive_tool_names = {t.name for t in sensitive_tools}
 
-chatbot_runnable = primary_chatbot_prompt | llm.bind_tools(primary_chatbot_tools)
+primary_assistant_runnable = primary_assistant_prompt | llm.bind_tools(primary_assistant_tools)
 
 # We don't have the actual assistant nodes yet (nodes are functions).
 # We do this with a factory function.
@@ -315,7 +318,7 @@ chatbot_runnable = primary_chatbot_prompt | llm.bind_tools(primary_chatbot_tools
 from typing import Callable
 from langchain_core.messages import ToolMessage
 
-def create_assistant_node(assistant_name: str, new_dialog_state: str) -> Callable:
+def create_assistant_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
     
     def entry_node(state: State) -> dict:
         tool_call_id = state["message"][-1].tool_calls[0]["id"]
@@ -338,6 +341,40 @@ def create_assistant_node(assistant_name: str, new_dialog_state: str) -> Callabl
         }
     return entry_node
 
+flight_assistant_entry_node = create_assistant_entry_node("Flight Updates & Booking Assistant", "flight_assistant")
+car_assistant_entry_node = create_assistant_entry_node("Car Rental Assistant", "car_assistant")
+hotel_assistant_entry_node = create_assistant_entry_node("Hotel Booking Assistant", "hotel_assistant")
+excursion_assistant_entry_node = create_assistant_entry_node("Trip Recommendation Assistant", "excursion_assistant")
+
+# Node used for exiting any assistant
+
+def leave_specialized_assistant(state: State) -> dict:
+    """Pop the dialog stack and return to the main assistant.
+
+    This lets the full graph explicitly track the dialog flow and delegate control
+    to specific sub-graphs.
+    """
+    
+    messages = []
+    if state["messages"][-1].tool_calls:
+        # Does not support parallel tool calls by the LLM - fix this.
+
+        messages.append(
+            ToolMessage(
+                content = "Resuming dialog with the host assistant. Please reflect on the past conversation and assist the user as needed.",
+                tool_call_id = state["messages"][-1].tool_calls[0]["id"]
+            )
+        )
+        return {
+            "dialog_state": "pop",
+            "messages": messages
+        }
+
+flight_assistant_node = Asssitant(flight_assistant_runnable)
+car_assistant_node = Assistant(car_assistant_runnable)
+hotel_assistant_node = Assistant(hotel_assistant_runnable)
+excursion_assistant_node = Assistant(excursion_assistant_node)
+
 # End new new new
 
 # Graph
@@ -353,13 +390,64 @@ def user_info(state: State):
     return {"user_info": fetch_user_flight_information.invoke({})}
 
 graph_builder.add_node("fetch_user_info", user_info)
-graph_builder.add_edge("fetch_user_info", "chatbot")
+graph_builder.add_edge("fetch_user_info", "primary_assistant")
 
-graph_builder.add_node("chatbot", Chatbot(chatbot_runnable))
+graph_builder.add_node("primary_assistant", Assistant(primary_assistant_runnable))
+
+# New graph stuff.
+
+graph_builder.add_node("flight_assistant_entry", flight_assistant_entry_node)
+graph_builder.add_node("flight_assistant", flight_assistant_node)
+graph_builder.add_edge("flight_assistant_entry", "flight_assistant")
+
+graph_builder.add_node("flight_assistant_sensitive_tools", create_tool_node_with_fallback(flight_assistant_sensitive_tools))
+graph_builder.add_node("flight_assistant_safe_tools", create_tool_node_with_fallback(flight_assistant_safe_tools))
+graph_builder.add_edge("flight_assistant_sensitive_tools", "flight_assistant")
+graph_builder.add_edge("flight_assistant_safe_tools", "flight_assistant")
+graph_builder.add_conditional_edges("flight_assistant", route_flight_assistant)
+
+graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant)
+graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # New
-graph_builder.add_node("safe_tools", create_tool_node_with_fallback(safe_tools))
-graph_builder.add_node("sensitive_tools", create_tool_node_with_fallback(sensitive_tools))
+#graph_builder.add_node("safe_tools", create_tool_node_with_fallback(safe_tools))
+#graph_builder.add_node("sensitive_tools", create_tool_node_with_fallback(sensitive_tools))
 
 # Starting point.
 graph_builder.set_entry_point("fetch_user_info")
@@ -385,9 +473,9 @@ def custom_tools_router(state: State) -> Literal["safe_tools", "sensitive_tools"
     
 # New.
 # Edges.
-graph_builder.add_conditional_edges("chatbot", custom_tools_router)
-graph_builder.add_edge("safe_tools", "chatbot")
-graph_builder.add_edge("sensitive_tools", "chatbot")
+#graph_builder.add_conditional_edges("chatbot", custom_tools_router)
+#graph_builder.add_edge("safe_tools", "chatbot")
+#graph_builder.add_edge("sensitive_tools", "chatbot")
 
 mem = SqliteSaver.from_conn_string(":memory:")
 
