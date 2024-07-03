@@ -409,40 +409,29 @@ graph_builder.add_conditional_edges("flight_assistant", route_flight_assistant)
 graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant)
 graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
 
+def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools",
+                                                    "flight_assistant_sensitive_tools",
+                                                    "leave_specialized_assistant",
+                                                    "__end__"
+                                            ]:
+    # tools_condition routes to ToolNode if the last message has tool calls. 
+    # Otherwise, it routes to the end.
+    route = tools_conditon(state)
 
+    if route == END:
+        return END
+  
+    # Some additional triage is needed based on WHAT tools are called.
+    tool_calls = state["messages"][-1].tool_calls
+    
+    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+        return "leave_specialized_assistant"
 
+    safe_toolnames = [t.name for t in flight_assistant_safe_tools]
+    if all(tc["name"] in safe_toolnames for tc in tool_calls):
+        return "flight_assistant_safe_tools"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return "flight_assistant_sensitive_tools"
 
 
 # New
