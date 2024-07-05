@@ -300,10 +300,10 @@ primary_assistant_tools = [
     TavilySearchResults(max_results=1),
     search_flights,
     lookup_policy,  
-    ToFlightBookingAssistant,
-    ToBookCarRental,
-    ToHotelBookingAssistant,
-    ToBookExcursion,
+    ToFlightAssistant,
+    ToCarAssistant,
+    ToHotelAssistant,
+    ToExcursionAssistant,
 ]
 
 llm = ChatOpenAI(model_name="gpt-3.5-turbo-0125")
@@ -370,7 +370,8 @@ def leave_specialized_assistant(state: State) -> dict:
             "messages": messages
         }
 
-flight_assistant_node = Asssitant(flight_assistant_runnable)
+primary_assistant_node = Assistant(primary_assistant_runnable)
+flight_assistant_node = Asssistant(flight_assistant_runnable)
 car_assistant_node = Assistant(car_assistant_runnable)
 hotel_assistant_node = Assistant(hotel_assistant_runnable)
 excursion_assistant_node = Assistant(excursion_assistant_node)
@@ -390,11 +391,35 @@ def user_info(state: State):
     return {"user_info": fetch_user_flight_information.invoke({})}
 
 graph_builder.add_node("fetch_user_info", user_info)
-graph_builder.add_edge("fetch_user_info", "primary_assistant")
 
-graph_builder.add_node("primary_assistant", Assistant(primary_assistant_runnable))
+# New. I don't get this - can we ever not return "primary_assistant"?
+#graph_builder.add_edge("fetch_user_info", "primary_assistant")
+def route_to_workflow(state: State) -> Literal["primary_assistant",
+                                               "flight_assistant",
+                                               "car_assistant",
+                                               "hotel_assistant",
+                                               "excursion_assistant",
+                                       ]:
+    # Explanation is: if we are in a delegated state, route directly
+    # to the right assistant.
+    dialog_state = state.get("dialog_state")
+    if not dialog_state:
+        return "primary_assistant"
+    return dialog_state[-1]
 
-# New graph stuff.
+graph_builder.add_conditional_edges("fetch_user_info, route_to_workflow)
+
+
+
+
+
+
+# New graph stuff for all specialized assistants.
+
+graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant)
+graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
+
+# New graph stuff for flight assistant.
 
 graph_builder.add_node("flight_assistant_entry", flight_assistant_entry_node)
 graph_builder.add_node("flight_assistant", flight_assistant_node)
@@ -406,13 +431,11 @@ graph_builder.add_edge("flight_assistant_sensitive_tools", "flight_assistant")
 graph_builder.add_edge("flight_assistant_safe_tools", "flight_assistant")
 graph_builder.add_conditional_edges("flight_assistant", route_flight_assistant)
 
-graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant)
-graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
 
 def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools",
                                                     "flight_assistant_sensitive_tools",
                                                     "leave_specialized_assistant",
-                                                    "__end__"
+                                                    "__end__",
                                             ]:
     # tools_condition routes to ToolNode if the last message has tool calls. 
     # Otherwise, it routes to the end.
@@ -433,48 +456,227 @@ def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools
 
     return "flight_assistant_sensitive_tools"
 
+# New graph stuff for car assistant.
+
+graph_builder.add_node("car_assistant_entry", car_assistant_entry_node)
+graph_builder.add_node("car_assistant", car_assistant_node)
+graph_builder.add_edge("car_assistant_entry", "car_assistant")
+
+graph_builder.add_node("car_assistant_safe_tools", create_tool_node_with_fallback(car_assistant_safe_tools))
+graph_builder.add_node("car_assistant_sensitive_tools", create_tool_node_with_fallback(car_assistant_sensitive_tools))
+graph_builder.add_edge("car_assistant_sensitive_tools", "car_assistant")
+graph_builder.add_edge("car_assistant_safe_tools", "car_assistant")
+graph_builder.add_conditional_edges("car_assistant", route_car_assistant)
+
+def route_car_assistant(state: State) -> Literal["car_assistant_safe_tools",
+                                                 "car_assistant_sensitive_tools",
+                                                 "leave_specialized_assistant",
+                                                 "__end__",
+                                         ]:
+    route = tools_condition(state)
+     
+    if route == END:
+        return END
+
+    tool_calls = state["messages"][-1].tool_calls
+    
+    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+        return "leave_specialized_assistant"
+
+    safe_toolnames = [t.name for t in car_assistant_safe_tools]
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+        return "car_assistant_safe_tools"
+
+    return "car_assistant_sensitive_tools"
+
+# New graph stuff for hotel assistant.
+
+graph_builder.add_node("hotel_assistant_entry", hotel_assistant_entry_node)
+graph_builder.add_node("hotel_assistant", hotel_assistant_node)
+graph_builder.add_edge("hotel_assistant_entry", "hotel_assistant")
+
+graph_builder.add_node("hotel_assistant_safe_tools", create_tool_node_with_fallback(hotel_assistant_safe_tools))
+graph_builder.add_node("hotel_assistant_sensitive_tools", create_tool_node_with_fallback(hotel_assistant_sensitive_tools))
+graph_builder.add_edge("hotel_assistant_sensitive_tools", "hotel_assistant")
+graph_builder.add_edge("hotel_assistant_safe_tools", "hotel_assistant")
+graph_builder.add_conditional_edges("hotel_assistant", route_hotel_assistant)
+
+def route_hotel_assistant(state: State) -> Literal["hotel_assistant_safe_tools",
+                                                 "hotel_assistant_sensitive_tools",
+                                                 "leave_specialized_assistant",
+                                                 "__end__",
+                                         ]:
+    route = tools_condition(state)
+     
+    if route == END:
+        return END
+
+    tool_calls = state["messages"][-1].tool_calls
+     
+    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+        return "leave_specialized_assistant"
+
+    safe_toolnames = [t.name for t in hotel_assistant_safe_tools]
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+        return "hotel_assistant_safe_tools"
+
+    return "hotel_assistant_sensitive_tools"
+
+# New graph stuff for excursion assistant.
+
+graph_builder.add_node("excursion_assistant_entry", excursion_assistant_entry_node)
+graph_builder.add_node("excursion_assistant", excursion_assistant_node)
+graph_builder.add_edge("excursion_assistant_entry", "excursion_assistant")
+
+graph_builder.add_node("excursion_assistant_safe_tools", create_tool_node_with_fallback(excursion_assistant_safe_tools))
+graph_builder.add_node("excursion_assistant_sensitive_tools", create_tool_node_with_fallback(excursion_assistant_sensitive_tools))
+graph_builder.add_edge("excursion_assistant_sensitive_tools", "excursion_assistant")
+graph_builder.add_edge("excursion_assistant_safe_tools", "excursion_assistant")
+graph_builder.add_conditional_edges("excursion_assistant", route_excursion_assistant)
+
+def route_excursion_assistant(state: State) -> Literal["excursion_assistant_safe_tools",
+                                                 "excursion_assistant_sensitive_tools",
+                                                 "leave_specialized_assistant",
+                                                 "__end__",
+                                         ]:
+    route = tools_condition(state)
+
+    if route == END:
+        return END
+
+    tool_calls = state["messages"][-1].tool_calls
+
+    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+        return "leave_specialized_assistant"
+
+    safe_toolnames = [t.name for t in excursion_assistant_safe_tools]
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+        return "excursion_assistant_safe_tools"
+
+    return "excursion_assistant_sensitive_tools"
+
+# New graph stuff for primary assistant.
+
+graph_builder.add_node("primary_assistant", primary_assistant_node)
+
+graph_builder.add_node("primary_assistant_tools", create_tool_node_with_fallback(primary_assistant_tools))
+
+def route_from_primary_assistant(state: State) -> Literal["primary_assistant_tools",
+                                                          "flight_assistant_entry",
+                                                          "car_assistant_entry",
+                                                          "hotel_assistant_entry",
+                                                          "excursion_assistant_entry",
+                                                          "__end__",
+                                                  ]:
+    route = tools_condition(state)
+    if route == END:
+        return END
+
+    tool_calls = state["messages"][-1].tool_calls
+
+    # The below is a bit confusing, what's happening is this:
+    # We have registered all primary assistant tools with primary_assistant_tools.
+    # However, for the four tools below where we want to invoke a specialized assistant,
+    # we intercept the tool call and route the flow to the corresponding entry node.
+    # For any other tool in primary_assistant_tools, we route to the primary assistant tools node
+    # so that it can invoke the tool.
+
+    if tool_calls:
+        if tool_calls[0]["name"] == ToFlightAssistant.__name__:
+            return "flight_assistant_entry"
+        elif tool_calls[0]["name"] == ToCarAssistant.__name__:
+            return "car_assistant_entry"
+        elif tool_calls[0]["name"] == ToHotelAssisstant.__name__:
+            return "hotel_assistant_entry"
+        elif tool_calls[0]["name"] == ToExcursionAssistant.__name__:
+            return "execursion_assistant_entry"
+        # It's not one of the four reroutes to specialized assistants.
+        # This means we can route to the 'regular' tools node.
+        return "primary_assistant_tools"
+    # Can this ever be reached?
+    raise ValueError("Invalid route")
+
+# Since the keys and values are the same, the extra dict below seems redundant. Test this.
+# Key is the output of the route function, value is the name of the node to route to.
+graph_builder.add_conditional_edges("primary_assistant", route_from_primary_assistant,
+                                    {
+                                    "flight_assistant": "flight_assistant",
+                                    "car_assistant": "car_assistant",
+                                    "hotel_assistant": "hotel_assistant",
+                                    "excursion_assistant": "excursion_assistant",
+                                    "primary_assistant_tools": "primary_assistant_tools",
+                                    END: END,
+                                    },
+)
+
+graph_builder.add_edge("primary_assistant_tools", "primary_assitant")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # New
 #graph_builder.add_node("safe_tools", create_tool_node_with_fallback(safe_tools))
 #graph_builder.add_node("sensitive_tools", create_tool_node_with_fallback(sensitive_tools))
 
 # Starting point.
-graph_builder.set_entry_point("fetch_user_info")
+#graph_builder.set_entry_point("fetch_user_info")
+# New - probably equivalent.
+graph_builder.add_edge(START, "fetch_user_info")
 
-# New: custom tool router
 
-def custom_tools_router(state: State) -> Literal["safe_tools", "sensitive_tools", "__end__"]:
-    next_node_name = tools_condition(state)
 
-    if next_node_name == END:
-        return END
 
-    ai_message = state["messages"][-1]
-    # There can be multple tool calls -> enhance code for this e.g., via ANY statement.
 
-    first_tool_call = ai_message.tool_calls[0]
-    print("*"*80)
-    print(first_tool_call["name"])
-    print("*"*80)
-    if first_tool_call["name"] in sensitive_tool_names:
-        return "sensitive_tools"
-    return "safe_tools"
-    
-# New.
-# Edges.
-#graph_builder.add_conditional_edges("chatbot", custom_tools_router)
-#graph_builder.add_edge("safe_tools", "chatbot")
-#graph_builder.add_edge("sensitive_tools", "chatbot")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 mem = SqliteSaver.from_conn_string(":memory:")
 
 graph = graph_builder.compile(
 		checkpointer=mem,
 		# New
-		interrupt_before=["sensitive_tools"]
+		interrupt_before=["flight_assistant_sensitive_tools",
+                                  "car_assistant_sensitive_tools",
+                                  "hotel_assistant_sensitive_tools",
+                                  "excursion_assistant_sensitive_tools",
+                ],
 )
 
-# Test code.
+# Test code - no changes.
 
 import shutil
 import uuid
