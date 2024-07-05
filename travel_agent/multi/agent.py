@@ -14,22 +14,24 @@ from langgraph.graph.message import AnyMessage, add_messages
 
 #New
 # Using Optional here because we want to allow for specific value of None.
+
 def update_dialog_stack(existing_list: list[str], new_element: Optional[str]) -> list[str]:
     if new_element is None:
         return existing_list
     if new_element == "pop":
-        # This returns the list minus the last element.
+        # This returns the list minus the last element, so the list as it should be.
         return existing_list[:-1]
     return existing_list + [new_element]
     
-
-
 class State(TypedDict):
     messages: Annotated[list[ AnyMessage ], add_messages]
     user_info: str
     #New
-    dialog_state: Annotated[list[ Literal["primary_assistant", "flight_assistant", "car_assistent", "hotel_assistant", "excursion_assistant"] ], update_dialog_stack]
-
+    dialog_state: Annotated[list[ Literal["primary_assistant", 
+                                          "flight_assistant", 
+                                          "car_assistent", 
+                                          "hotel_assistant", 
+                                          "excursion_assistant"] ], update_dialog_stack]
 
 # Chatbot w/ template containing a good system prompt.
 
@@ -40,9 +42,9 @@ from langchain_core.runnables import Runnable, RunnableConfig
 #New
 from langchain_core.pydantic_v1 import BaseModel, Field
 
-# All chatbot nodes including the assistants are based on this Chatbot class.
-# They do the same thing, only differ in what the runnable does.
-# The runnable is the combo of a specific prompt + dedicated llm with specialized toolset for the job.
+# All chatbot nodes are based on this Chatbot class. They only differ in what the runnable does.
+# The runnable is the combo of a dedicated prompt + dedicated llm + specialized toolset for the job.
+
 class Assistant:
 
     def __init__(self, runnable: Runnable):
@@ -62,8 +64,13 @@ class Assistant:
 
 # New new new
 
-# New tool for delegates to return control to supervisor.
+# New prompts + new tool for delegates to return control to supervisor.
 class CompleteOrEscalate(BaseModel):
+    # tool to indicate that the control flow should be passed back to the primary assistant. This happens if it 
+    # has successfully completed its work or if the user has changed their mind or needs assistance on something 
+    # that beyond the scope of that particular workflow.
+    # The string below is used to inform the LLM of what this tool can do.
+
     """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
     who can re-route the dialog based on the user's needs."""
 
@@ -79,29 +86,29 @@ class CompleteOrEscalate(BaseModel):
             "example 2": {
                 "cancel": True,
                 "reason": "I have fully completed the task.",
-            }
+            },
             "example 3": {
                 "cancel": False,
                 "reason": "I need to search the user's emails or calendar for more information.",
             },
         }
 
-# The delegates.
-flight_assistant_prompt = ChatPromtTemlate.from_messages(
+flight_assistant_prompt = ChatPromptTemplate.from_messages(
     # List with a first system message in it and a placeholder for all other messages that will be appended.
     [
         ("system",
 
         "You are a specialized assistant for handling flight updates. "
-        " The primary assistant delegates work to you whenever the user needs help updating their bookings. "
+        "The primary assistant delegates work to you whenever the user needs help updating their bookings. "
         "Confirm the updated flight details with the customer and inform them of any additional fees. "
-        " When searching, be persistent. Expand your query bounds if the first search returns no results. "
-        "If you need more information or the customer changes their mind, escalate the task back to the main assistant."
-        " Remember that a booking isn't completed until after the relevant tool has successfully been used."
+        "When searching, be persistent. Expand your query bounds if the first search returns no results. "
+        "If you need more information or the customer changes their mind, escalate the task back to the main assistant. "
+        "Remember that a booking isn't completed until after the relevant tool has successfully been used."
         "\n\nCurrent user flight information:\n<Flights>\n{user_info}\n</Flights>"
         "\nCurrent time: {time}."
         "\n\nIf the user needs help, and none of your tools are appropriate for it, then"
         ' "CompleteOrEscalate" the dialog to the host assistant. Do not waste the user\'s time. Do not make up invalid tools or functions.',
+        ),
         ("placeholder", "{messages}"),
     ]
 ).partial(time=datetime.now())
@@ -109,7 +116,6 @@ flight_assistant_prompt = ChatPromtTemlate.from_messages(
 flight_assistant_safe_tools = [search_flights]
 flight_assistant_sensitive_tools = [update_ticket_to_new_flight, cancel_ticket]
 flight_assistant_tools = flight_assistant_safe_tools + flight_assistant_sensitive_tools
-flight_assistant_runnable = flight_assistant_prompt | llm.bind_tools(flight_assistant_tools + [CompleteOrEscalate])
 
 hotel_assistant_prompt = ChatPromptTemplate.from_messages(
     [
@@ -118,12 +124,12 @@ hotel_assistant_prompt = ChatPromptTemplate.from_messages(
         "You are a specialized assistant for handling hotel bookings. "
         "The primary assistant delegates work to you whenever the user needs help booking a hotel. "
         "Search for available hotels based on the user's preferences and confirm the booking details with the customer. "
-        " When searching, be persistent. Expand your query bounds if the first search returns no results. "
-        "If you need more information or the customer changes their mind, escalate the task back to the main assistant."
-        " Remember that a booking isn't completed until after the relevant tool has successfully been used."
+        "When searching, be persistent. Expand your query bounds if the first search returns no results. "
+        "If you need more information or the customer changes their mind, escalate the task back to the main assistant. "
+        "Remember that a booking isn't completed until after the relevant tool has successfully been used."
         "\nCurrent time: {time}."
-        '\n\nIf the user needs help, and none of your tools are appropriate for it, then "CompleteOrEscalate" the dialog to the host assistant.'
-        " Do not waste the user's time. Do not make up invalid tools or functions."
+        "\n\nIf the user needs help, and none of your tools are appropriate for it, then"
+        ' "CompleteOrEscalate" the dialog to the host assistant. Do not waste the user\'s time. Do not make up invalid tools or functions.'
         "\n\nSome examples for which you should CompleteOrEscalate:\n"
         " - 'what's the weather like this time of year?'\n"
         " - 'nevermind i think I'll book separately'\n"
@@ -138,9 +144,6 @@ hotel_assistant_prompt = ChatPromptTemplate.from_messages(
 hotel_assistant_safe_tools = [search_hotels]
 hotel_assistant_sensitive_tools = [book_hotel, update_hotel, cancel_hotel]
 hotel_assistant_tools = hotel_assistant_safe_tools + hotel_assistant_sensitive_tools
-hotel_assistant_runnable = hotel_assistant_prompt | llm.bind_tools(
-    hotel_assistant_tools + [CompleteOrEscalate]
-)
 
 car_assistant_prompt = ChatPromptTemplate.from_messages(
     [
@@ -149,9 +152,9 @@ car_assistant_prompt = ChatPromptTemplate.from_messages(
         "You are a specialized assistant for handling car rental bookings. "
         "The primary assistant delegates work to you whenever the user needs help booking a car rental. "
         "Search for available car rentals based on the user's preferences and confirm the booking details with the customer. "
-        " When searching, be persistent. Expand your query bounds if the first search returns no results. "
-        "If you need more information or the customer changes their mind, escalate the task back to the main assistant."
-        " Remember that a booking isn't completed until after the relevant tool has successfully been used."
+        "When searching, be persistent. Expand your query bounds if the first search returns no results. "
+        "If you need more information or the customer changes their mind, escalate the task back to the main assistant. "
+        "Remember that a booking isn't completed until after the relevant tool has successfully been used."
         "\nCurrent time: {time}."
         "\n\nIf the user needs help, and none of your tools are appropriate for it, then "
         '"CompleteOrEscalate" the dialog to the host assistant. Do not waste the user\'s time. Do not make up invalid tools or functions.'
@@ -167,15 +170,8 @@ car_assistant_prompt = ChatPromptTemplate.from_messages(
 ).partial(time=datetime.now())
 
 car_assistant_safe_tools = [search_car_rentals]
-car_assistant_sensitive_tools = [
-    book_car_rental,
-    update_car_rental,
-    cancel_car_rental,
-]
+car_assistant_sensitive_tools = [book_car_rental, update_car_rental, cancel_car_rental]
 car_assistant_tools = car_assistant_safe_tools + car_assistant_sensitive_tools
-car_assistant_runnable = car_assistant_prompt | llm.bind_tools(
-    car_assistant_tools + [CompleteOrEscalate]
-)
 
 excursion_assistant_prompt = ChatPromptTemplate.from_messages(
     [
@@ -184,11 +180,12 @@ excursion_assistant_prompt = ChatPromptTemplate.from_messages(
         "You are a specialized assistant for handling trip recommendations. "
         "The primary assistant delegates work to you whenever the user needs help booking a recommended trip. "
         "Search for available trip recommendations based on the user's preferences and confirm the booking details with the customer. "
-        "If you need more information or the customer changes their mind, escalate the task back to the main assistant."
-        " When searching, be persistent. Expand your query bounds if the first search returns no results. "
-        " Remember that a booking isn't completed until after the relevant tool has successfully been used."
+        "If you need more information or the customer changes their mind, escalate the task back to the main assistant. "
+        "When searching, be persistent. Expand your query bounds if the first search returns no results."
+        "Remember that a booking isn't completed until after the relevant tool has successfully been used."
         "\nCurrent time: {time}."
-        '\n\nIf the user needs help, and none of your tools are appropriate for it, then "CompleteOrEscalate" the dialog to the host assistant. Do not waste the user\'s time. Do not make up invalid tools or functions.'
+        "\n\nIf the user needs help, and none of your tools are appropriate for it, then "
+        '"CompleteOrEscalate" the dialog to the host assistant. Do not waste the user\'s time. Do not make up invalid tools or functions.'
         "\n\nSome examples for which you should CompleteOrEscalate:\n"
         " - 'nevermind i think I'll book separately'\n"
         " - 'i need to figure out transportation while i'm there'\n"
@@ -202,20 +199,17 @@ excursion_assistant_prompt = ChatPromptTemplate.from_messages(
 excursion_assistant_safe_tools = [search_trip_recommendations]
 excursion_assistant_sensitive_tools = [book_excursion, update_excursion, cancel_excursion]
 excursion_assistant_tools = excursion_assistant_safe_tools + excursion_assistant_sensitive_tools
-excursion_assistant_runnable = excursion_assistant_prompt | llm.bind_tools(
-    excursion_assistant_tools + [CompleteOrEscalate]
-)
 
 # New tools for supervisor to delegate work to the delegates
 
-class ToFlightAssistant(BaseModel):
+class EngageFlightAssistant(BaseModel):
     """Transfers work to a specialized assistant to handle flight updates and cancellations."""
 
     request: str = Field(
         description = "Any necessary followup questions the update flight assistant should clarify before proceeding."
     )
 
-class ToHotelAssistant(BaseModel):
+class EngageHotelAssistant(BaseModel):
     """Transfer work to a specialized assistant to handle hotel bookings."""
     
     location: str = Field(
@@ -225,7 +219,7 @@ class ToHotelAssistant(BaseModel):
     checkout_date: str = Field(description = "The check-out date for the hotel.")
     request: str = Field(
         description = "Any additional information or request from the user regarding the hotel booking."
-
+    )
     class Config:
         schema_extra = {
             "example": {
@@ -236,7 +230,7 @@ class ToHotelAssistant(BaseModel):
             }
         }
 
-class ToCarAssistant(BaseModel):
+class EngageCarAssistant(BaseModel):
     """Transfers work to a specialized assistant to handle car rental bookings."""
 
     location: str = Field(
@@ -253,14 +247,14 @@ class ToCarAssistant(BaseModel):
             "example": {
                 "location": "Basel",
                 "start_date": "2023-07-01",
-                "end_date": 2023-07-05",
+                "end_date": "2023-07-05",
                 "request": "I need a compact car with automatic transmission.",
             }
         }
 
 
-class ToExcursionAssistant(BaseModel):
-    """Transfers work to a specialized assistant to handle trip recommendation and other excursion bookings."""
+class EngageExcursionAssistant(BaseModel):
+    """Transfers work to a specialized assistant to handle trip recommendations and other excursion bookings."""
 
     location: str = Field(
         description = "The location where the user wants to book a recommended trip."
@@ -283,12 +277,12 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages(
         "You are a helpful customer support assistant for Swiss Airlines. "
         "Your primary role is to search for flight information and company policies to answer customer queries. "
         "If a customer requests to update or cancel a flight, book a car rental, book a hotel, or get trip recommendations, "
-        "delegate the task to the appropriate specialized assistant by invoking the corresponding tool. You are not able to make these types of changes yourself."
-        " Only the specialized assistants are given permission to do this for the user."
+        "delegate the task to the appropriate specialized assistant by invoking the corresponding tool. You are not able to "
+        "make these types of changes yourself. Only the specialized assistants are given permission to do this for the user. "
         "The user is not aware of the different specialized assistants, so do not mention them; just quietly delegate through function calls. "
         "Provide detailed information to the customer, and always double-check the database before concluding that information is unavailable. "
-        " When searching, be persistent. Expand your query bounds if the first search returns no results. "
-        " If a search comes up empty, expand your search before giving up."
+        "When searching, be persistent. Expand your query bounds if the first search returns no results. "
+        "If a search comes up empty, expand your search before giving up."
         "\n\nCurrent user flight information:\n<Flights>\n{user_info}\n</Flights>"
         "\nCurrent time: {time}.",
         ),
@@ -300,20 +294,32 @@ primary_assistant_tools = [
     TavilySearchResults(max_results=1),
     search_flights,
     lookup_policy,  
-    ToFlightAssistant,
-    ToCarAssistant,
-    ToHotelAssistant,
-    ToExcursionAssistant,
+    EngageFlightAssistant,
+    EngageCarAssistant,
+    EngageHotelAssistant,
+    EngageExcursionAssistant,
 ]
 
+# Create llm and then all the runnables.
+
 llm = ChatOpenAI(model_name="gpt-3.5-turbo-0125")
-
-#sensitive_tool_names = {t.name for t in sensitive_tools}
-
 primary_assistant_runnable = primary_assistant_prompt | llm.bind_tools(primary_assistant_tools)
+flight_assistant_runnable = flight_assistant_prompt | llm.bind_tools(flight_assistant_tools + [CompleteOrEscalate])
+hotel_assistant_runnable = hotel_assistant_prompt | llm.bind_tools(hotel_assistant_tools + [CompleteOrEscalate])
+car_assistant_runnable = car_assistant_prompt | llm.bind_tools(car_assistant_tools + [CompleteOrEscalate])
+excursion_assistant_runnable = excursion_assistant_prompt | llm.bind_tools(excursion_assistant_tools + [CompleteOrEscalate])
 
-# We don't have the actual assistant nodes yet (nodes are functions).
-# We do this with a factory function.
+# Create the nodes for all assistants.
+
+primary_assistant_node = Assistant(primary_assistant_runnable)
+flight_assistant_node = Assistant(flight_assistant_runnable)
+car_assistant_node = Assistant(car_assistant_runnable)
+hotel_assistant_node = Assistant(hotel_assistant_runnable)
+excursion_assistant_node = Assistant(excursion_assistant_runnable)
+
+# Create the entry nodes for the delegate assistants.
+# A tool was called so the LLM is expecting a ToolMessage. Also the dialog_state needs to be updated.
+# We do all this in the entry nodes.
 
 from typing import Callable
 from langchain_core.messages import ToolMessage
@@ -321,19 +327,24 @@ from langchain_core.messages import ToolMessage
 def create_assistant_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
     
     def entry_node(state: State) -> dict:
-        tool_call_id = state["message"][-1].tool_calls[0]["id"]
+        tool_call_id = state["messages"][-1].tool_calls[0]["id"]
+        print("*" * 80)
+        print(len(state["messages"][-1].tool_calls))
+        for tool_call in state["messages"][-1].tool_calls:
+            print(tool_call["id"])
+        print("*" * 80)
         return {
-            "message": [
+            "messages": [
                 ToolMessage(
-                    content = f"The assistant is now the {assistant_name}." 
-                    "Reflect on the above conversation between the host assistant and the user."
-                    " The user's intent is unsatisfied. Use the provided tools to assist the user."
-                    f"Remember, you are {assistant_name},"
-                    " and the booking, update, other other action is not complete until"
-                    " after you have successfully invoked the appropriate tool."
-                    " If the user changes their mind or needs help for other tasks, call the"
-                    " CompleteOrEscalate function to let the primary host assistant take control."
-                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    content = f"The assistant is now the {assistant_name}. " 
+                    "Reflect on the above conversation between the host assistant and the user. "
+                    "The user's intent is unsatisfied. Use the provided tools to assist the user. "
+                    "Remember, you are {assistant_name}, "
+                    "and the booking, update, other other action is not complete until "
+                    "after you have successfully invoked the appropriate tool. "
+                    "If the user changes their mind or needs help for other tasks, call the "
+                    "CompleteOrEscalate function to let the primary host assistant take control. "
+                    "Do not mention who you are - just act as the proxy for the primary assistant.",
                     tool_call_id = tool_call_id,
                 )
             ],
@@ -346,55 +357,47 @@ car_assistant_entry_node = create_assistant_entry_node("Car Rental Assistant", "
 hotel_assistant_entry_node = create_assistant_entry_node("Hotel Booking Assistant", "hotel_assistant")
 excursion_assistant_entry_node = create_assistant_entry_node("Trip Recommendation Assistant", "excursion_assistant")
 
-# Node used for exiting any assistant
+# Node used for exiting any assistant.
+# Same principle here: a tool was called so the LLM is expecting a ToolMessage. We also pop the dialog_state.
 
-def leave_specialized_assistant(state: State) -> dict:
-    """Pop the dialog stack and return to the main assistant.
-
-    This lets the full graph explicitly track the dialog flow and delegate control
-    to specific sub-graphs.
-    """
+def leave_specialized_assistant_node(state: State) -> dict:
+    """Pop the dialog stack and return to the primary assistant.
+    This lets the full graph explicitly track the dialog flow and delegate control to specific sub-graphs. """
     
     messages = []
     if state["messages"][-1].tool_calls:
         # Does not support parallel tool calls by the LLM - fix this.
+        # Do a check here to see if there are multiple calls, and find out what the other calls are.
 
         messages.append(
             ToolMessage(
-                content = "Resuming dialog with the host assistant. Please reflect on the past conversation and assist the user as needed.",
+                content = "Resuming dialog with the primary assistant. Please reflect on the past conversation and assist the user as needed.",
                 tool_call_id = state["messages"][-1].tool_calls[0]["id"]
             )
         )
         return {
-            "dialog_state": "pop",
-            "messages": messages
+            "messages": messages,
+            "dialog_state": "pop"
         }
 
-primary_assistant_node = Assistant(primary_assistant_runnable)
-flight_assistant_node = Asssistant(flight_assistant_runnable)
-car_assistant_node = Assistant(car_assistant_runnable)
-hotel_assistant_node = Assistant(hotel_assistant_runnable)
-excursion_assistant_node = Assistant(excursion_assistant_node)
-
-# End new new new
-
-# Graph
-
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import tools_condition
-
-graph_builder = StateGraph(State)
-
-# Nodes
-def user_info(state: State):
+def fetch_user_info_node(state: State) -> dict:
     return {"user_info": fetch_user_flight_information.invoke({})}
 
-graph_builder.add_node("fetch_user_info", user_info)
+primary_assistant_tools_node = create_tool_node_with_fallback(primary_assistant_tools)
+flight_assistant_sensitive_tools_node = create_tool_node_with_fallback(flight_assistant_sensitive_tools)
+flight_assistant_safe_tools_node = create_tool_node_with_fallback(flight_assistant_safe_tools)
+car_assistant_safe_tools_node = create_tool_node_with_fallback(car_assistant_safe_tools)
+car_assistant_sensitive_tools_node = create_tool_node_with_fallback(car_assistant_sensitive_tools)
+hotel_assistant_safe_tools_node = create_tool_node_with_fallback(hotel_assistant_safe_tools)
+hotel_assistant_sensitive_tools_node = create_tool_node_with_fallback(hotel_assistant_sensitive_tools)
+excursion_assistant_safe_tools_node = create_tool_node_with_fallback(excursion_assistant_safe_tools)
+excursion_assistant_sensitive_tools_node = create_tool_node_with_fallback(excursion_assistant_sensitive_tools)
+
+# Edges.
 
 # New. I don't get this - can we ever not return "primary_assistant"?
 #graph_builder.add_edge("fetch_user_info", "primary_assistant")
-def route_to_workflow(state: State) -> Literal["primary_assistant",
+def route_from_fetch_user_info(state: State) -> Literal["primary_assistant",
                                                "flight_assistant",
                                                "car_assistant",
                                                "hotel_assistant",
@@ -407,39 +410,14 @@ def route_to_workflow(state: State) -> Literal["primary_assistant",
         return "primary_assistant"
     return dialog_state[-1]
 
-graph_builder.add_conditional_edges("fetch_user_info, route_to_workflow)
-
-
-
-
-
-
-# New graph stuff for all specialized assistants.
-
-graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant)
-graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
-
-# New graph stuff for flight assistant.
-
-graph_builder.add_node("flight_assistant_entry", flight_assistant_entry_node)
-graph_builder.add_node("flight_assistant", flight_assistant_node)
-graph_builder.add_edge("flight_assistant_entry", "flight_assistant")
-
-graph_builder.add_node("flight_assistant_sensitive_tools", create_tool_node_with_fallback(flight_assistant_sensitive_tools))
-graph_builder.add_node("flight_assistant_safe_tools", create_tool_node_with_fallback(flight_assistant_safe_tools))
-graph_builder.add_edge("flight_assistant_sensitive_tools", "flight_assistant")
-graph_builder.add_edge("flight_assistant_safe_tools", "flight_assistant")
-graph_builder.add_conditional_edges("flight_assistant", route_flight_assistant)
-
-
-def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools",
+def route_from_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools",
                                                     "flight_assistant_sensitive_tools",
                                                     "leave_specialized_assistant",
                                                     "__end__",
                                             ]:
     # tools_condition routes to ToolNode if the last message has tool calls. 
     # Otherwise, it routes to the end.
-    route = tools_conditon(state)
+    route = tools_condition(state)
 
     if route == END:
         return END
@@ -447,7 +425,7 @@ def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools
     # Some additional triage is needed based on WHAT tools are called.
     tool_calls = state["messages"][-1].tool_calls
     
-    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls):
         return "leave_specialized_assistant"
 
     safe_toolnames = [t.name for t in flight_assistant_safe_tools]
@@ -456,19 +434,7 @@ def route_flight_assistant(state: State) -> Literal["flight_assistant_safe_tools
 
     return "flight_assistant_sensitive_tools"
 
-# New graph stuff for car assistant.
-
-graph_builder.add_node("car_assistant_entry", car_assistant_entry_node)
-graph_builder.add_node("car_assistant", car_assistant_node)
-graph_builder.add_edge("car_assistant_entry", "car_assistant")
-
-graph_builder.add_node("car_assistant_safe_tools", create_tool_node_with_fallback(car_assistant_safe_tools))
-graph_builder.add_node("car_assistant_sensitive_tools", create_tool_node_with_fallback(car_assistant_sensitive_tools))
-graph_builder.add_edge("car_assistant_sensitive_tools", "car_assistant")
-graph_builder.add_edge("car_assistant_safe_tools", "car_assistant")
-graph_builder.add_conditional_edges("car_assistant", route_car_assistant)
-
-def route_car_assistant(state: State) -> Literal["car_assistant_safe_tools",
+def route_from_car_assistant(state: State) -> Literal["car_assistant_safe_tools",
                                                  "car_assistant_sensitive_tools",
                                                  "leave_specialized_assistant",
                                                  "__end__",
@@ -480,28 +446,16 @@ def route_car_assistant(state: State) -> Literal["car_assistant_safe_tools",
 
     tool_calls = state["messages"][-1].tool_calls
     
-    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls):
         return "leave_specialized_assistant"
 
     safe_toolnames = [t.name for t in car_assistant_safe_tools]
-    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls):
         return "car_assistant_safe_tools"
 
     return "car_assistant_sensitive_tools"
 
-# New graph stuff for hotel assistant.
-
-graph_builder.add_node("hotel_assistant_entry", hotel_assistant_entry_node)
-graph_builder.add_node("hotel_assistant", hotel_assistant_node)
-graph_builder.add_edge("hotel_assistant_entry", "hotel_assistant")
-
-graph_builder.add_node("hotel_assistant_safe_tools", create_tool_node_with_fallback(hotel_assistant_safe_tools))
-graph_builder.add_node("hotel_assistant_sensitive_tools", create_tool_node_with_fallback(hotel_assistant_sensitive_tools))
-graph_builder.add_edge("hotel_assistant_sensitive_tools", "hotel_assistant")
-graph_builder.add_edge("hotel_assistant_safe_tools", "hotel_assistant")
-graph_builder.add_conditional_edges("hotel_assistant", route_hotel_assistant)
-
-def route_hotel_assistant(state: State) -> Literal["hotel_assistant_safe_tools",
+def route_from_hotel_assistant(state: State) -> Literal["hotel_assistant_safe_tools",
                                                  "hotel_assistant_sensitive_tools",
                                                  "leave_specialized_assistant",
                                                  "__end__",
@@ -513,28 +467,16 @@ def route_hotel_assistant(state: State) -> Literal["hotel_assistant_safe_tools",
 
     tool_calls = state["messages"][-1].tool_calls
      
-    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls):
         return "leave_specialized_assistant"
 
     safe_toolnames = [t.name for t in hotel_assistant_safe_tools]
-    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls):
         return "hotel_assistant_safe_tools"
 
     return "hotel_assistant_sensitive_tools"
 
-# New graph stuff for excursion assistant.
-
-graph_builder.add_node("excursion_assistant_entry", excursion_assistant_entry_node)
-graph_builder.add_node("excursion_assistant", excursion_assistant_node)
-graph_builder.add_edge("excursion_assistant_entry", "excursion_assistant")
-
-graph_builder.add_node("excursion_assistant_safe_tools", create_tool_node_with_fallback(excursion_assistant_safe_tools))
-graph_builder.add_node("excursion_assistant_sensitive_tools", create_tool_node_with_fallback(excursion_assistant_sensitive_tools))
-graph_builder.add_edge("excursion_assistant_sensitive_tools", "excursion_assistant")
-graph_builder.add_edge("excursion_assistant_safe_tools", "excursion_assistant")
-graph_builder.add_conditional_edges("excursion_assistant", route_excursion_assistant)
-
-def route_excursion_assistant(state: State) -> Literal["excursion_assistant_safe_tools",
+def route_from_excursion_assistant(state: State) -> Literal["excursion_assistant_safe_tools",
                                                  "excursion_assistant_sensitive_tools",
                                                  "leave_specialized_assistant",
                                                  "__end__",
@@ -546,20 +488,14 @@ def route_excursion_assistant(state: State) -> Literal["excursion_assistant_safe
 
     tool_calls = state["messages"][-1].tool_calls
 
-    if any(tc["name"] == CompleteOrEscalate.__name__for tc in tool_calls):
+    if any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls):
         return "leave_specialized_assistant"
 
     safe_toolnames = [t.name for t in excursion_assistant_safe_tools]
-    if all(tc["name"] in safe_toolsnames for tc in tool_calls]:
+    if all(tc["name"] in safe_toolsnames for tc in tool_calls):
         return "excursion_assistant_safe_tools"
 
     return "excursion_assistant_sensitive_tools"
-
-# New graph stuff for primary assistant.
-
-graph_builder.add_node("primary_assistant", primary_assistant_node)
-
-graph_builder.add_node("primary_assistant_tools", create_tool_node_with_fallback(primary_assistant_tools))
 
 def route_from_primary_assistant(state: State) -> Literal["primary_assistant_tools",
                                                           "flight_assistant_entry",
@@ -582,13 +518,13 @@ def route_from_primary_assistant(state: State) -> Literal["primary_assistant_too
     # so that it can invoke the tool.
 
     if tool_calls:
-        if tool_calls[0]["name"] == ToFlightAssistant.__name__:
+        if tool_calls[0]["name"] == EngageFlightAssistant.__name__:
             return "flight_assistant_entry"
-        elif tool_calls[0]["name"] == ToCarAssistant.__name__:
+        elif tool_calls[0]["name"] == EngageCarAssistant.__name__:
             return "car_assistant_entry"
-        elif tool_calls[0]["name"] == ToHotelAssisstant.__name__:
+        elif tool_calls[0]["name"] == EngageHotelAssistant.__name__:
             return "hotel_assistant_entry"
-        elif tool_calls[0]["name"] == ToExcursionAssistant.__name__:
+        elif tool_calls[0]["name"] == EngageExcursionAssistant.__name__:
             return "execursion_assistant_entry"
         # It's not one of the four reroutes to specialized assistants.
         # This means we can route to the 'regular' tools node.
@@ -596,76 +532,105 @@ def route_from_primary_assistant(state: State) -> Literal["primary_assistant_too
     # Can this ever be reached?
     raise ValueError("Invalid route")
 
-# Since the keys and values are the same, the extra dict below seems redundant. Test this.
-# Key is the output of the route function, value is the name of the node to route to.
+# Graph
+
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import START, END, StateGraph
+from langgraph.prebuilt import tools_condition
+
+graph_builder = StateGraph(State)
+
+
+graph_builder.add_node("fetch_user_info", fetch_user_info_node)
+graph_builder.add_node("primary_assistant", primary_assistant_node)
+graph_builder.add_node("primary_assistant_tools", primary_assistant_tools_node) 
+graph_builder.add_node("flight_assistant_entry", flight_assistant_entry_node)
+graph_builder.add_node("flight_assistant", flight_assistant_node)
+graph_builder.add_node("flight_assistant_sensitive_tools", flight_assistant_sensitive_tools_node)
+graph_builder.add_node("flight_assistant_safe_tools", flight_assistant_safe_tools_node)
+graph_builder.add_node("car_assistant_entry", car_assistant_entry_node)
+graph_builder.add_node("car_assistant", car_assistant_node)
+graph_builder.add_node("car_assistant_safe_tools", car_assistant_safe_tools_node)
+graph_builder.add_node("car_assistant_sensitive_tools", car_assistant_sensitive_tools_node)
+graph_builder.add_node("hotel_assistant_entry", hotel_assistant_entry_node)
+graph_builder.add_node("hotel_assistant", hotel_assistant_node)
+graph_builder.add_node("hotel_assistant_safe_tools", hotel_assistant_safe_tools_node)
+graph_builder.add_node("hotel_assistant_sensitive_tools", hotel_assistant_sensitive_tools_node)
+graph_builder.add_node("excursion_assistant_entry", excursion_assistant_entry_node)
+graph_builder.add_node("excursion_assistant", excursion_assistant_node)
+graph_builder.add_node("excursion_assistant_safe_tools", excursion_assistant_safe_tools_node)
+graph_builder.add_node("excursion_assistant_sensitive_tools", excursion_assistant_sensitive_tools_node)
+graph_builder.add_node("leave_specialized_assistant", leave_specialized_assistant_node)
+
+
+
+
+graph_builder.add_edge(START, "fetch_user_info")
+graph_builder.add_conditional_edges("fetch_user_info", route_from_fetch_user_info)
 graph_builder.add_conditional_edges("primary_assistant", route_from_primary_assistant,
-                                    {
-                                    "flight_assistant": "flight_assistant",
-                                    "car_assistant": "car_assistant",
-                                    "hotel_assistant": "hotel_assistant",
-                                    "excursion_assistant": "excursion_assistant",
-                                    "primary_assistant_tools": "primary_assistant_tools",
-                                    END: END,
-                                    },
+    {
+        "flight_assistant_entry": "flight_assistant_entry",
+        "car_assistant_entry": "car_assistant_entry",
+        "hotel_assistant_entry": "hotel_assistant_entry",
+        "excursion_assistant_entry": "excursion_assistant_entry",
+        "primary_assistant_tools": "primary_assistant_tools",
+        END: END,
+    },
+)
+graph_builder.add_edge("primary_assistant_tools", "primary_assistant")
+
+graph_builder.add_edge("flight_assistant_entry", "flight_assistant")
+graph_builder.add_conditional_edges("flight_assistant", route_from_flight_assistant,
+    {
+        "flight_assistant_safe_tools": "flight_assistant_safe_tools",
+        "flight_assistant_sensitive_tools": "flight_assistant_sensitive_tools",
+        "leave_specialized_assistant": "leave_specialized_assistant",
+        END: END,
+    }
+)
+graph_builder.add_edge("flight_assistant_sensitive_tools", "flight_assistant")
+graph_builder.add_edge("flight_assistant_safe_tools", "flight_assistant")
+
+graph_builder.add_edge("car_assistant_entry", "car_assistant")
+graph_builder.add_conditional_edges("car_assistant", route_from_car_assistant,
+    {
+        "car_assistant_safe_tools": "car_assistant_safe_tools",
+        "car_assistant_sensitive_tools": "car_assistant_sensitive_tools",
+        "leave_specialized_assistant": "leave_specialized_assistant",
+        END: END,
+    }
+)
+graph_builder.add_edge("car_assistant_sensitive_tools", "car_assistant")
+graph_builder.add_edge("car_assistant_safe_tools", "car_assistant")
+
+graph_builder.add_edge("hotel_assistant_entry", "hotel_assistant")
+graph_builder.add_conditional_edges("hotel_assistant", route_from_hotel_assistant,
+    {
+    "hotel_assistant_safe_tools": "hotel_assistant_safe_tools",
+    "hotel_assistant_sensitive_tools": "hotel_assistant_sensitive_tools",
+    "leave_specialized_assistant": "leave_specialized_assistant",
+    END: END,
+    }
+)
+graph_builder.add_edge("hotel_assistant_sensitive_tools", "hotel_assistant")
+graph_builder.add_edge("hotel_assistant_safe_tools", "hotel_assistant")
+
+graph_builder.add_edge("excursion_assistant_entry", "excursion_assistant")
+graph_builder.add_conditional_edges("excursion_assistant", route_from_excursion_assistant,
+    {
+    "excursion_assistant_safe_tools": "excursion_assistant_safe_tools",
+    "excursion_assistant_sensitive_tools": "excursion_assistant_sensitive_tools",
+    "leave_specialized_assistant": "leave_specialized_assistant",
+    END: END,
+    }
 )
 
-graph_builder.add_edge("primary_assistant_tools", "primary_assitant")
+graph_builder.add_edge("excursion_assistant_sensitive_tools", "excursion_assistant")
+graph_builder.add_edge("excursion_assistant_safe_tools", "excursion_assistant")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# New
-#graph_builder.add_node("safe_tools", create_tool_node_with_fallback(safe_tools))
-#graph_builder.add_node("sensitive_tools", create_tool_node_with_fallback(sensitive_tools))
-
-# Starting point.
-#graph_builder.set_entry_point("fetch_user_info")
-# New - probably equivalent.
-graph_builder.add_edge(START, "fetch_user_info")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+graph_builder.add_edge("leave_specialized_assistant", "primary_assistant")
 
 mem = SqliteSaver.from_conn_string(":memory:")
-
 graph = graph_builder.compile(
 		checkpointer=mem,
 		# New
