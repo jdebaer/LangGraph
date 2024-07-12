@@ -319,22 +319,3 @@ for event in graph.stream(question)
     print(event.content)
     print("\n----\n")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-if __name__ == "__main__":
-    get_retriever()
-
